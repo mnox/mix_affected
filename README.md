@@ -92,8 +92,8 @@ defp deps do
 end
 ```
 
-Without `preferred_envs`, run the tasks with `MIX_ENV=test` (they warn
-otherwise). The test env matters: `test/support` is compiled only there and
+Without `preferred_envs`, run the tasks with `MIX_ENV=test`
+(`affected.files` and `affected.test` warn otherwise). The test env matters: `test/support` is compiled only there and
 must be part of the dependency graph.
 
 ### As a Mix archive
@@ -234,13 +234,16 @@ for `affected.report`.
 * An empty selection (`full_run: false`, `tests: []`) is valid: nothing is
   affected.
 
-### Exit codes
+### Exit codes (`affected.files`)
 
 | Code | Meaning | CI handling |
 |---|---|---|
-| 0 | Success, including a full run and an empty selection. | Use the output. |
+| 0 | Success, including a full run (an umbrella root is always one) and an empty selection. | Use the output. |
 | 1 | Usage error: bad flags, missing or unreadable input, a bad `--base` ref, invalid `affected:` config. | Fail the step. |
-| 2 | Internal failure: the graph or the test map could not be built. The output says `full_run: true`. | Treat as a full run. |
+| 2 | Internal failure: the graph or the test map could not be built, or a prebuilt map entry is stale (`test_map_unavailable:stale_entry:<test>`). The output says `full_run: true`. | Treat as a full run. |
+
+`affected.test` never exits 2: on any full run it runs the whole suite and
+exits with `mix test`'s status, or 1 on a usage error.
 
 ### `affected.report`
 
