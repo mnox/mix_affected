@@ -17,7 +17,7 @@ defmodule MixAffected.SelectionTest do
   end
 
   defp config(affected \\ []) do
-    {:ok, config} = Config.from_project(affected: affected)
+    {:ok, config} = Config.from_project([affected: affected], "/repo")
     config
   end
 

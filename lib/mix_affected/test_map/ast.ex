@@ -8,6 +8,8 @@ defmodule MixAffected.TestMap.Ast do
   kept too. Over-matching only selects more tests; it never drops one.
   """
 
+  alias MixAffected.Glob
+
   @doc """
   Every module the source names through an alias (`Foo.Bar`), resolving
   `alias`, `alias ..., as:` and `alias Foo.{A, B}`. `:error` if it does not parse.
@@ -94,7 +96,10 @@ defmodule MixAffected.TestMap.Ast do
   the source does not parse, it reads but no literal names a repo path, a
   reading call's literal argument is not anchored at the root (`"."`,
   `"**/*.ex"`, a relative `"fixtures/x.json"`), it lists the working
-  directory (`File.ls!/0`, `File.cwd!()`), or a `__DIR__` path leaves the root.
+  directory (`File.ls!/0`, `File.cwd!()`), a `__DIR__` path leaves the root,
+  or a literal glob does not compile (`MixAffected.Glob.compile/1`) or uses
+  a `[...]` character class `MixAffected.Glob` does not implement, so
+  selection never matches against it.
   """
   @spec reads(String.t(), String.t(), [String.t()]) :: [String.t()]
   def reads(source, test_file, top_level) do
@@ -114,11 +119,17 @@ defmodule MixAffected.TestMap.Ast do
   defp read_globs(%{everything?: true}, _ctx), do: ["**"]
 
   defp read_globs(%{paths: paths}, ctx) do
-    case paths |> Enum.flat_map(&globs(&1, ctx)) |> Enum.uniq() |> Enum.sort() do
-      [] -> ["**"]
-      globs -> globs
-    end
+    globs = paths |> Enum.flat_map(&globs(&1, ctx)) |> Enum.uniq() |> Enum.sort()
+
+    if globs == [] or Enum.any?(globs, &unmatchable?/1),
+      do: ["**"],
+      else: globs
   end
+
+  # `Path.wildcard/1` reads `[...]` as a character class; `MixAffected.Glob`
+  # would read it as literal text and never match the files it names.
+  defp unmatchable?(glob),
+    do: String.contains?(glob, "[") or match?({:error, _}, Glob.compile(glob))
 
   # {node to keep walking, acc}. A node whose literals are consumed here is
   # replaced by its non-literal parts, so its literals are not read twice.

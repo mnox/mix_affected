@@ -10,7 +10,7 @@ defmodule MixAffected.TestMap do
       while requiring the file), `:ast` (the file failed to require; module
       references read from its AST, which misses what `use` injects, so the
       test runs whenever anything is affected), or `:always` (it does not
-      parse either: same)
+      parse either, or an `affected_by` glob was rejected: same)
     * `:refs` - root-relative source files of every module it references,
       including other test files that define modules it uses
     * `:hashes` - `%{path => hash/1}` of the test file and of every file in
@@ -22,7 +22,8 @@ defmodule MixAffected.TestMap do
       be loaded (typically defined by a file deleted or edited before the map
       was built); any seed selects every test with any
     * `:affected_by` - its literal `@moduletag affected_by: [globs]` and
-      `@affected_by [globs]`
+      `@affected_by [globs]`, minus any `MixAffected.Config.validate_glob/2`
+      rejects (which make the entry `:always`)
     * `:reads` - globs of the repo files it reads itself (`File.read!/1`,
       `Path.wildcard/1`, ...: a guard scanning `lib/**`, a doc test), `["**"]`
       when they cannot be pinned down, `[]` when it reads none

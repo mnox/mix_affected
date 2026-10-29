@@ -403,6 +403,58 @@ defmodule MixAffected.CLIIntegrationTest do
     assert doc["tests"] == []
   end
 
+  test "a directory or malformed glob in the affected: config is a usage error naming the fix" do
+    dir = FixtureProject.compiled!("single_app")
+    mix_exs = Path.join(dir, "mix.exs")
+    original = File.read!(mix_exs)
+    mapping = ~s|{"lib/single_app/standalone.ex", ["test/single_app/mapped_*_test.exs"]}|
+
+    for {bad_mapping, expected} <- [
+          {~s|{"lib/single_app/guarded", ["test/single_app/mapped_*_test.exs"]}|,
+           ~s|"lib/single_app/guarded/**"|},
+          {~s|{"lib/single_app/{standalone,leaf.ex", ["test/**"]}|,
+           ~s|"lib/single_app/{standalone,leaf.ex"|}
+        ] do
+      File.write!(mix_exs, String.replace(original, mapping, bad_mapping))
+
+      result = files(dir, ["lib/single_app/guarded/policy.ex"], ["--format", "json"])
+      assert result.status == 1, result.stderr
+      assert result.stderr =~ "mix_affected: affected: mappings"
+      assert result.stderr =~ expected
+      assert result.stdout == ""
+    end
+  end
+
+  test "a bad affected_by glob in one test file always runs that test and selection still succeeds" do
+    dir = FixtureProject.compiled!("single_app")
+
+    File.write!(Path.join(dir, "test/single_app/brace_test.exs"), """
+    defmodule SingleApp.BraceTest do
+      use ExUnit.Case, async: true
+      @moduletag affected_by: ["lib/single_app/{pong,ping.ex"]
+
+      test "x", do: assert(SingleApp.Leaf.value())
+    end
+    """)
+
+    result = files(dir, ["lib/single_app/pong.ex"], ["--format", "json"])
+    doc = json!(result)
+    assert doc["full_run"] == false
+
+    assert doc["tests"] == [
+             "test/single_app/brace_test.exs",
+             "test/single_app/dynamic_test.exs",
+             "test/single_app/helpers_test.exs",
+             "test/single_app/uses_helpers_test.exs"
+           ]
+
+    assert result.stderr =~
+             ~r/mix_affected: warning: test\/single_app\/brace_test\.exs: .*always runs/
+
+    # Only the bad file falls back: the others keep their precise selection.
+    refute "test/single_app/dynamic_test.exs" in tests(dir, ["lib/single_app/leaf.ex"])
+  end
+
   describe "--base" do
     setup do
       dir = FixtureProject.compiled!("single_app")
@@ -478,6 +530,99 @@ defmodule MixAffected.CLIIntegrationTest do
       result = FixtureProject.mix(dir, ["affected.files", "--base", "no-such-ref"])
       assert result.status == 1
       assert result.stderr =~ "no-such-ref"
+    end
+
+    test "an empty, blank or option-like base is a usage error before any diff", %{dir: dir} do
+      touch!(Path.join(dir, "lib/single_app/leaf.ex"))
+      git!(dir, ["commit", "-q", "-am", "touch leaf"])
+
+      for args <- [["--base", ""], ["--base", " "], ["--base=--output=out"]] do
+        result = FixtureProject.mix(dir, ["affected.files" | args] ++ ["--format", "json"])
+        assert result.status == 1
+        assert result.stderr =~ ~r/mix_affected: (--base is empty|invalid --base)/
+        refute result.stdout =~ ~s("tests")
+      end
+
+      refute File.exists?(Path.join(dir, "out...HEAD"))
+    end
+
+    test "a base with no merge base with HEAD is a usage error, never an empty selection",
+         %{dir: dir} do
+      git!(dir, ["checkout", "-q", "--orphan", "lonely"])
+      git!(dir, ["commit", "-q", "-m", "unrelated history"])
+
+      result = FixtureProject.mix(dir, ["affected.files", "--base", "main", "--format", "json"])
+      assert result.status == 1
+      assert result.stderr =~ "mix_affected: git diff"
+      assert result.stderr =~ "main...HEAD"
+      assert result.stderr =~ "no merge base"
+      refute result.stdout =~ ~s("tests")
+    end
+  end
+
+  defp touch!(path), do: File.write!(path, File.read!(path) <> "\n")
+
+  describe "--base with the project in a subdirectory of the repository" do
+    setup do
+      repo =
+        Path.join(System.tmp_dir!(), "mix_affected_repo_#{System.unique_integer([:positive])}")
+
+      on_exit(fn -> File.rm_rf!(repo) end)
+      File.mkdir_p!(Path.join(repo, "other"))
+      File.write!(Path.join(repo, "other/x.txt"), "x\n")
+      app = Path.join(repo, "app")
+      File.rename!(FixtureProject.copy!("single_app"), app)
+      FixtureProject.compile!(app)
+
+      git!(repo, ["init", "-q", "-b", "main"])
+      File.write!(Path.join(repo, ".gitignore"), "_build/\ndeps/\n")
+      git!(repo, ["add", "."])
+      git!(repo, ["commit", "-q", "-m", "base"])
+      git!(repo, ["checkout", "-q", "-b", "feature"])
+      %{repo: repo, app: app}
+    end
+
+    test "paths inside the project are re-rooted from the repository top level", %{app: app} do
+      touch!(Path.join(app, "lib/single_app/leaf.ex"))
+      git!(app, ["commit", "-q", "-am", "touch leaf"])
+      touch!(Path.join(app, "lib/single_app/direct.ex"))
+
+      File.write!(Path.join(app, "test/single_app/new_test.exs"), """
+      defmodule SingleApp.NewTest do
+        use ExUnit.Case
+        test "new", do: assert(true)
+      end
+      """)
+
+      doc = base(app)
+
+      assert doc["full_run"] == false
+
+      assert doc["changed_files"] == [
+               "lib/single_app/direct.ex",
+               "lib/single_app/leaf.ex",
+               "test/single_app/new_test.exs"
+             ]
+
+      assert "test/single_app/leaf_test.exs" in doc["tests"]
+      assert "test/single_app/direct_test.exs" in doc["tests"]
+      assert "test/single_app/new_test.exs" in doc["tests"]
+    end
+
+    test "a change outside the project forces a full run naming its absolute path",
+         %{repo: repo, app: app} do
+      touch!(Path.join(app, "lib/single_app/leaf.ex"))
+      touch!(Path.join(repo, "other/x.txt"))
+      git!(repo, ["commit", "-q", "-am", "touch leaf and a sibling"])
+
+      doc = base(app)
+      # git and the task's cwd both report the physical path (/private/var on macOS).
+      top = repo |> git!(["rev-parse", "--show-toplevel"]) |> String.trim()
+      outside = Path.join(top, "other/x.txt")
+
+      assert doc["full_run"] == true
+      assert doc["changed_files"] == Enum.sort([outside, "lib/single_app/leaf.ex"])
+      assert doc["reason"] == "unmapped_file:#{outside}"
     end
   end
 

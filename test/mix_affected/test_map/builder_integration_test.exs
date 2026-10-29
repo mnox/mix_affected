@@ -88,6 +88,72 @@ defmodule MixAffected.TestMap.BuilderIntegrationTest do
     assert map.tests["test/single_app/leaf_test.exs"].affected_by == []
   end
 
+  test "an affected_by glob that is malformed or names a directory makes only its test always run, with a warning" do
+    dir = FixtureProject.compiled!("single_app")
+
+    File.write!(Path.join(dir, "test/single_app/brace_test.exs"), """
+    defmodule SingleApp.BraceTest do
+      use ExUnit.Case, async: true
+      @moduletag affected_by: ["lib/single_app/{pong,ping.ex", "lib/single_app/leaf.ex"]
+
+      test "x", do: assert(SingleApp.Leaf.value())
+    end
+    """)
+
+    File.write!(Path.join(dir, "test/single_app/dir_test.exs"), """
+    defmodule SingleApp.DirTest do
+      use ExUnit.Case, async: true
+      @moduletag affected_by: ["lib/single_app/guarded"]
+
+      test "x", do: assert(SingleApp.Leaf.value())
+    end
+    """)
+
+    File.write!(Path.join(dir, "test/single_app/slash_test.exs"), """
+    defmodule SingleApp.SlashTest do
+      use ExUnit.Case, async: true
+      @moduletag affected_by: ["lib/single_app/**/"]
+
+      test "x", do: assert(SingleApp.Leaf.value())
+    end
+    """)
+
+    File.write!(Path.join(dir, "test/single_app/dot_test.exs"), """
+    defmodule SingleApp.DotTest do
+      use ExUnit.Case, async: true
+      @moduletag affected_by: ["lib/single_app/./**"]
+
+      test "x", do: assert(SingleApp.Leaf.value())
+    end
+    """)
+
+    {map, result} = build_map!(dir)
+
+    assert %{mode: :always, affected_by: []} = map.tests["test/single_app/dot_test.exs"]
+
+    assert result.stderr =~
+             ~r/mix_affected: warning: test\/single_app\/dot_test\.exs: .*"lib\/single_app\/\*\*".*always runs/
+
+    assert %{mode: :always, affected_by: ["lib/single_app/leaf.ex"]} =
+             map.tests["test/single_app/brace_test.exs"]
+
+    assert %{mode: :always, affected_by: []} = map.tests["test/single_app/slash_test.exs"]
+
+    assert result.stderr =~
+             ~r/mix_affected: warning: test\/single_app\/slash_test\.exs: .*"lib\/single_app\/\*\*".*always runs/
+
+    assert %{mode: :always, affected_by: []} = map.tests["test/single_app/dir_test.exs"]
+    assert map.tests["test/single_app/tagged_test.exs"].mode == :tracer
+
+    assert result.stderr =~
+             ~r/mix_affected: warning: test\/single_app\/brace_test\.exs: .*"lib\/single_app\/\{pong,ping\.ex".*always runs/
+
+    assert result.stderr =~
+             ~r/mix_affected: warning: test\/single_app\/dir_test\.exs: .*"lib\/single_app\/guarded\/\*\*".*always runs/
+
+    assert result.stderr =~ "(tracer 15, ast 0, always 4)"
+  end
+
   test "a test file that fails to require falls back to its AST; an unparseable one always runs" do
     dir = FixtureProject.compiled!("single_app")
 

@@ -97,7 +97,7 @@ defmodule MixAffected.CLI do
   @doc "The project config, or a usage error."
   @spec config!() :: Config.t()
   def config! do
-    case Config.from_project(Mix.Project.config()) do
+    case Config.from_project(Mix.Project.config(), File.cwd!()) do
       {:ok, config} -> config
       {:error, message} -> usage_error!(message)
     end

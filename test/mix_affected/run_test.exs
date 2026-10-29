@@ -31,7 +31,7 @@ defmodule MixAffected.RunTest do
   end
 
   defp run(changed, overrides) do
-    {:ok, config} = Config.from_project([])
+    {:ok, config} = Config.from_project([], @root)
 
     opts =
       Keyword.merge(

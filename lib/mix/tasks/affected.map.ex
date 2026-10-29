@@ -9,7 +9,9 @@ defmodule Mix.Tasks.Affected.Map do
   Compiles the project and starts it as `mix test` does, requires
   `test_helper.exs` and every test file with a compiler tracer registered,
   and runs no test. See `MixAffected.TestMap.Builder` for the fallbacks when
-  a test file fails to require. A summary goes to stderr.
+  a test file fails to require, or declares an `affected_by` glob that is
+  malformed or names a directory (that file always runs, with a warning). A
+  summary goes to stderr.
 
   Exit status: 0 when written, 1 on a usage error (including an umbrella
   root, which is not supported), 2 when the map could not be built.
@@ -46,6 +48,9 @@ defmodule Mix.Tasks.Affected.Map do
 
     for error <- stats.helper_errors,
         do: IO.puts(:stderr, "mix_affected: warning: test helper failed: #{error}")
+
+    for warning <- stats.glob_warnings,
+        do: IO.puts(:stderr, "mix_affected: warning: #{warning}")
 
     IO.puts(
       :stderr,

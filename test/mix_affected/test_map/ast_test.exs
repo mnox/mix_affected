@@ -199,5 +199,27 @@ end
     test "an unparseable file reads everything" do
       assert reads("defmodule Broken do\n") == ["**"]
     end
+
+    test "a literal glob that does not compile reads everything instead of breaking selection" do
+      source = """
+      defmodule MyApp.BraceTest do
+        use ExUnit.Case
+        test "x", do: Path.wildcard("guides/{intro,setup.md") ++ Path.wildcard("lib/*.ex")
+      end
+      """
+
+      assert reads(source) == ["**"]
+    end
+
+    test "a literal glob with a [...] class, which MixAffected.Glob does not implement, reads everything" do
+      source = """
+      defmodule MyApp.ClassTest do
+        use ExUnit.Case
+        test "x", do: Path.wildcard("guides/[ab].md") ++ Path.wildcard("lib/*.ex")
+      end
+      """
+
+      assert reads(source) == ["**"]
+    end
   end
 end

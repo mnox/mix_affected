@@ -16,7 +16,7 @@ defmodule MixAffected.ClassifierTest do
             ])
 
   defp config(affected \\ []) do
-    {:ok, config} = Config.from_project(affected: affected)
+    {:ok, config} = Config.from_project([affected: affected], "/repo")
     config
   end
 

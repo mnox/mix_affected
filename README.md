@@ -134,7 +134,11 @@ MIX_ENV=test mix affected.test --base "origin/$BASE" -- --warnings-as-errors
 ```
 
 `--base` diffs against the merge base, so fetch enough history for it
-(for example `fetch-depth: 0` with `actions/checkout`).
+(for example `fetch-depth: 0` with `actions/checkout`). With no merge base
+(a shallow clone missing it, or unrelated histories) the task exits 1 with
+git's `no merge base` error rather than selecting nothing. So does an empty
+`--base`, or one like `origin/` left by an unset `$GITHUB_BASE_REF` on a push
+event.
 
 If the test container has no `.git` (a Docker build context, say), compute
 the change set on the runner and pass it in:
@@ -167,9 +171,15 @@ Exactly one of:
 
 * `--base <git-ref>`: the union of `git diff --name-only --no-renames
   <ref>...HEAD`, uncommitted changes (`git diff --name-only --no-renames
-  HEAD`) and untracked files (`git ls-files --others --exclude-standard`).
+  HEAD`) and untracked files (`git ls-files --others --exclude-standard`),
+  all repository-wide (`--no-relative` overrides a `diff.relative` config;
+  untracked files are listed from the top level), so a project in a
+  subdirectory still sees changes beside it.
   `--no-renames` makes a moved file appear as delete + add, so its old path
-  forces a full run.
+  forces a full run. The ref must resolve to a commit (`git rev-parse
+  --verify <ref>^{commit}`) and is checked before any diff: an empty or
+  blank ref, a ref starting with `-`, or one that is not a commit is a usage
+  error (exit 1). It also needs a merge base with `HEAD`.
 * `--files <path|->`: newline-separated project-relative paths; `-` reads
   stdin. No git needed.
 
@@ -239,7 +249,7 @@ for `affected.report`.
 | Code | Meaning | CI handling |
 |---|---|---|
 | 0 | Success, including a full run (an umbrella root is always one) and an empty selection. | Use the output. |
-| 1 | Usage error: bad flags, missing or unreadable input, a bad `--base` ref, invalid `affected:` config. | Fail the step. |
+| 1 | Usage error: bad flags, missing or unreadable input, a `--base` that is empty, starts with `-`, is not a commit or has no merge base with `HEAD`, invalid `affected:` config (including a malformed glob, a glob not in normal form or a pattern naming a directory), or a `:test_paths`/`:test_pattern` that does not compile as a glob. | Fail the step. |
 | 2 | Internal failure: the graph or the test map could not be built, or a prebuilt map entry is stale (`test_map_unavailable:stale_entry:<test>`). The output says `full_run: true`. | Treat as a full run. |
 
 `affected.test` never exits 2: on any full run it runs the whole suite and
@@ -300,8 +310,28 @@ affected: [
 ```
 
 Globs match project-root-relative paths: `**` spans directories (`**/` also
-matches none), `*` and `?` stay within one, `{a,b}` is alternation.
-Unknown keys or malformed values are a usage error, not silently ignored.
+matches none), `*` and `?` stay within one, `{a,b}` is alternation. Every
+other character is literal, and a glob matches the whole path, so a pattern
+with no `*`, `?` or `{` matches exactly one file.
+Unknown keys or malformed values are a usage error (exit 1), not silently
+ignored. That includes, in any key:
+
+* a glob that does not compile: an unclosed `{` (`"lib/{a,b"`) or a `}` with
+  no `{` before it
+* a pattern naming a directory: any glob ending in `/` (`"lib/app/workers/"`,
+  `"lib/app/workers/**/"`, since a changed path never ends in `/`), or a
+  glob-free pattern that is a directory under the project root
+  (`"lib/app/workers"`): it would match no file under it. The error names
+  the fix, `"lib/app/workers/**"` (`"**"` for `"./"`).
+* a glob not in normal form: a `.`, `..` or empty segment
+  (`"lib/./app/**"`, `"lib//app/**"`, `"lib/../lib/app/**"`). Changed paths
+  are normalized, so such a glob would match nothing; the error names the
+  normal form. A leading `./` is fine; a glob whose `..` climbs above the
+  project root is an error.
+* bytes that are not valid UTF-8
+
+`:test_paths` and `:test_pattern` are checked the same way: a pattern that
+does not compile is a usage error rather than a crash during selection.
 
 A test module can declare the files it depends on in ways no compiler sees:
 
@@ -323,6 +353,14 @@ Module.register_attribute(__MODULE__, :affected_by, persist: true)
 ```
 
 Either way only a literal list of strings is read (from the file's AST).
+Its globs follow the config rules above, but a bad one never stops the
+build: `mix affected.map` drops it, marks that test file `:always` (it runs
+whenever anything is affected) and warns on stderr, for example
+`mix_affected: warning: test/my_app/client_test.exs: affected_by glob
+"lib/my_app/clients" names a directory, so it matches no file; write
+"lib/my_app/clients/**" to match the files under it; it always runs`.
+`affected.files` and `affected.test` pass that warning on when they build
+the map. Other test files are unaffected.
 
 
 ## How selection works
@@ -364,8 +402,9 @@ per test file, the globs of what it reads (`reads`), from its AST:
 * `reads` is `["**"]` (it may read anything) when that cannot be pinned
   down: the file does not parse, it reads but no literal names a repo path,
   a reading call's literal argument is not anchored at the root (`"."`,
-  `"**/*.ex"`, `"fixtures/x.json"`), it lists the working directory, or a
-  `__DIR__` path leaves the root
+  `"**/*.ex"`, `"fixtures/x.json"`), it lists the working directory, a
+  `__DIR__` path leaves the root, or a literal glob is malformed or uses a
+  `[...]` character class (which these globs do not implement)
 
 A test whose `reads` match a *changed* file (a seed: a changed source or
 test file, or an ignored file) is selected. A file merely reached through
@@ -419,8 +458,10 @@ Fallbacks, per test file, recorded as the entry's `mode`:
   That misses what macros (`use MyApp.DataCase`) inject, so the test runs
   whenever anything is affected; the references are kept only to load the
   test files it needs.
-* `:always`: the file does not even parse; it runs whenever anything is
-  affected, and its `reads` is `["**"]`.
+* `:always`: the file does not even parse (then its `reads` is `["**"]`),
+  or one of its `affected_by` globs is malformed, not in normal form or
+  names a directory (see
+  **Configuration**); it runs whenever anything is affected.
 
 Test files that exist but are not in the map (a map prebuilt before they
 were added), and entries whose recorded hashes no longer match, are selected
@@ -497,7 +538,10 @@ build the map once on the main branch, cache it, and pass it in with
 * Non-test `.exs` files under `test/` (support scripts required by the
   helper) are not graph nodes: changing one is a full run.
 * With `--base` in a project that is a subdirectory of the repository,
-  changed files outside the project are unmapped and force a full run.
+  paths are re-rooted to the project, and a changed file outside the project
+  forces a full run (`unmapped_file:<absolute path>`): a sibling directory in
+  a monorepo always does, whether the change there is committed, uncommitted
+  or a new untracked file.
 
 
 ## Contributing

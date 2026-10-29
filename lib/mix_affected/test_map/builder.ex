@@ -16,6 +16,10 @@ defmodule MixAffected.TestMap.Builder do
        either is `:always`
     5. every file's `:reads` (repo files it reads itself) come from its AST,
        anchored at the entries of the root (`MixAffected.TestMap.Ast.reads/3`)
+    6. an `affected_by` glob `MixAffected.Config.validate_glob/2` rejects
+       (malformed, not in normal form, or naming a directory) is dropped and its file is
+       `:always`, with a warning in the stats: the edge it declared cannot be
+       honoured, so the test runs whenever anything is affected
 
   Referenced modules are mapped to their source file: the test file that
   defined them, else `module_info(:compile)[:source]`. Sources outside the
@@ -38,7 +42,8 @@ defmodule MixAffected.TestMap.Builder do
           tracer: non_neg_integer(),
           ast: non_neg_integer(),
           always: non_neg_integer(),
-          helper_errors: [String.t()]
+          helper_errors: [String.t()],
+          glob_warnings: [String.t()]
         }
 
   @doc """
@@ -61,16 +66,26 @@ defmodule MixAffected.TestMap.Builder do
       missing? = &(not Map.has_key?(defined, &1) and not Code.ensure_loaded?(&1))
       top_level = File.ls!(root)
 
-      tests =
-        Map.new(files, fn file ->
+      {tests, glob_warnings} =
+        Enum.map_reduce(files, [], fn file, warnings ->
           traced = for {_key, module} <- :ets.lookup(table, {:ref, file}), do: module
+          ctx = {resolve, missing?, top_level}
+          {entry, invalid} = entry(file, traced, MapSet.member?(failed, file), ctx, root)
+          self = relative(root, file)
 
-          {relative(root, file),
-           entry(file, traced, MapSet.member?(failed, file), {resolve, missing?, top_level}, root)}
+          {{self, entry},
+           warnings ++ Enum.map(invalid, &"#{self}: affected_by #{&1}; it always runs")}
         end)
 
+      tests = Map.new(tests)
       impls = impls(Keyword.get(opts, :modules, []), &source(&1, %{}, root, exclude))
-      {TestMap.new(tests, impls), Map.put(count(tests), :helper_errors, helper_errors)}
+
+      stats =
+        tests
+        |> count()
+        |> Map.merge(%{helper_errors: helper_errors, glob_warnings: glob_warnings})
+
+      {TestMap.new(tests, impls), stats}
     after
       :ets.delete(table)
     end
@@ -135,7 +150,7 @@ defmodule MixAffected.TestMap.Builder do
   defp entry(file, traced, failed?, {resolve, missing?, top_level}, root) do
     source = File.read!(file)
     self = relative(root, file)
-    affected_by = Ast.affected_by(source)
+    {affected_by, invalid} = affected_by(source, root)
 
     {mode, refs} =
       case {failed?, failed? && Ast.references(source)} do
@@ -143,6 +158,8 @@ defmodule MixAffected.TestMap.Builder do
         {true, {:ok, named}} -> {:ast, refs(traced ++ named, resolve, self)}
         {true, :error} -> {:always, []}
       end
+
+    mode = if invalid == [], do: mode, else: :always
 
     hashes =
       Map.new(refs, &{&1, TestMap.hash(File.read!(Path.join(root, &1)))})
@@ -153,14 +170,27 @@ defmodule MixAffected.TestMap.Builder do
     unresolved =
       traced |> Enum.uniq() |> Enum.filter(missing?) |> Enum.map(&inspect/1) |> Enum.sort()
 
-    %{
-      mode: mode,
-      refs: refs,
-      affected_by: affected_by,
-      hashes: hashes,
-      unresolved: unresolved,
-      reads: Ast.reads(source, self, top_level)
-    }
+    {%{
+       mode: mode,
+       refs: refs,
+       affected_by: affected_by,
+       hashes: hashes,
+       unresolved: unresolved,
+       reads: Ast.reads(source, self, top_level)
+     }, invalid}
+  end
+
+  # {valid globs, reasons the others were rejected}
+  defp affected_by(source, root) do
+    source
+    |> Ast.affected_by()
+    |> Enum.reduce({[], []}, fn glob, {valid, invalid} ->
+      case Config.validate_glob(glob, root) do
+        :ok -> {[glob | valid], invalid}
+        {:error, reason} -> {valid, [reason | invalid]}
+      end
+    end)
+    |> then(fn {valid, invalid} -> {Enum.reverse(valid), Enum.reverse(invalid)} end)
   end
 
   defp refs(modules, resolve, self) do

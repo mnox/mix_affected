@@ -120,7 +120,8 @@ defmodule MixAffected.Run do
   @doc """
   Reads the map at `map_path`, building it there with a child
   `mix affected.map` when it is missing or in a format this version does not
-  read (an older map lacks data selection relies on).
+  read (an older map lacks data selection relies on). The child's
+  `mix_affected: warning:` lines are passed on to stderr.
   """
   @spec ensure_map(Path.t(), Path.t()) :: {:ok, TestMap.t()} | {:error, String.t()}
   def ensure_map(root, map_path) do
@@ -142,7 +143,13 @@ defmodule MixAffected.Run do
 
   defp build_map(root, map_path) do
     case Xref.mix(root, ["affected.map", "--map", map_path], mix_env: "test") do
-      {:ok, _log} ->
+      {:ok, log} ->
+        # The child's warnings (a test file that always runs, a failed helper)
+        # are the caller's to see; its summary line is not.
+        for line <- String.split(log, "\n"),
+            String.starts_with?(line, "mix_affected: warning:"),
+            do: IO.puts(:stderr, line)
+
         TestMap.read(map_path)
 
       {:error, {:xref_failed, status, log}} ->
