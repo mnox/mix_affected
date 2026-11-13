@@ -5,8 +5,9 @@
 [![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/mix_affected)
 
 Run only the tests a change can affect. Given the files a change touched,
-`mix_affected` works out which test files must run, in the spirit of Nx's
-`affected` command and Bazel's test selection, for plain Mix projects.
+`mix_affected` works out which test files must run, for plain Mix projects.
+It is directly inspired by [Nx's `affected` command](https://nx.dev/ci/features/affected),
+which does not support Elixir (see [Acknowledgements](#acknowledgements)).
 
     $ mix affected.files --base origin/main
     test/my_app/accounts_test.exs
@@ -30,6 +31,7 @@ partial selection.
 * [Escape hatches](#escape-hatches)
 * [Limitations](#limitations)
 * [Contributing](#contributing)
+* [Acknowledgements](#acknowledgements)
 * [License](#license)
 
 ## How it works
@@ -551,6 +553,18 @@ build the map once on the main branch, cache it, and pass it in with
 See [CONTRIBUTING.md](CONTRIBUTING.md). The short version:
 
     mix format --check-formatted && mix credo --strict && mix dialyzer && mix test
+
+## Acknowledgements
+
+This project exists because of [Nx](https://nx.dev) and its
+[`affected` command](https://nx.dev/ci/features/affected): the idea of
+running only what a change can reach came straight from it. Nx does not support Elixir, so `mix_affected` brings the
+same approach to Mix using `mix xref` and the compiler. Its test-selection
+edge cases were hardened by comparing its behavior against Nx's. Bazel's
+test selection was a further influence.
+
+`mix_affected` is an independent project, not affiliated with or endorsed by
+Nx or Nrwl.
 
 ## License
 
