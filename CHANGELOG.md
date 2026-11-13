@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Issue and pull request templates, and docs and package builds in CI.
+- README states that Windows is not supported yet.
+
 ## [0.1.0] - 2026-10-28
 
 ### Added

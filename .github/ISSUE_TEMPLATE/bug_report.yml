@@ -1,0 +1,28 @@
+name: Bug report
+description: Something other than a missed test is wrong (a crash, a wrong exit code, bad output).
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Full stdout/stderr, including any stacktrace.
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Elixir, OTP and mix_affected versions
+      placeholder: Elixir 1.19.2, OTP 28, mix_affected 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system

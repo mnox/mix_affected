@@ -59,6 +59,8 @@ partial selection.
 * A single-app Mix project. Umbrella projects are not supported yet (an
   umbrella root is always a full run).
 * `git` on the path, for `--base` only.
+* Linux or macOS. Windows is not supported yet: path handling there
+  (drive letters, `__DIR__` paths) is known to be incomplete.
 
 ## Install
 

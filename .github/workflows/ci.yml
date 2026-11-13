@@ -69,3 +69,5 @@ jobs:
       - run: mix credo --strict
       - run: mix hex.audit
       - run: mix dialyzer --format github
+      - run: mix docs --warnings-as-errors
+      - run: mix hex.build

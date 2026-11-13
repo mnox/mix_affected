@@ -1,0 +1,39 @@
+name: Missed test
+description: A selection skipped a test file that the change affected.
+labels: ["missed-test"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A missed test is the worst outcome this library can produce, so thank you for reporting it.
+        A minimal project that reproduces it is the fastest route to a fix.
+  - type: textarea
+    id: changed
+    attributes:
+      label: Changed files
+      description: Output of `git diff --name-only --no-renames <base>...HEAD`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: missed
+    attributes:
+      label: Missed test file and how it depends on the change
+      description: For example a macro, `apply/3`, a file it reads, config, ...
+    validations:
+      required: true
+  - type: textarea
+    id: explain
+    attributes:
+      label: Explain output
+      description: Output of `mix affected.files --files changed.txt --explain --format json`
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Elixir, OTP and mix_affected versions
+      placeholder: Elixir 1.19.2, OTP 28, mix_affected 0.1.0
+    validations:
+      required: true
